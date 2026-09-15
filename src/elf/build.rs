@@ -10,6 +10,11 @@ use crate::section::{Section, SectionFlags, SectionHeader, SectionType};
 
 use super::ElfImage;
 
+/// Upper bound for a serialized or mapped image, shared by every layout
+/// writer. Untrusted header fields can claim spans near `u64::MAX`; this cap
+/// rejects them before any allocation is attempted.
+const MAX_IMAGE: usize = 256 * 1024 * 1024;
+
 impl ElfImage {
     /// Serializes the image in ELF file layout.
     ///
@@ -146,6 +151,11 @@ impl ElfImage {
         let image_base = self.image_base();
         let span = usize::try_from(self.image_span())
             .map_err(|_| Error::generic("mapped image is too large"))?;
+        if span > MAX_IMAGE {
+            return Err(Error::generic(
+                "mapped image exceeds the 256 MiB layout limit",
+            ));
+        }
         let mut image = alloc::vec![0u8; span];
         for segment in &self.segments {
             if segment.header.r#type.0 != SegmentType::LOAD.0 {
@@ -207,6 +217,9 @@ impl ElfImage {
 }
 
 /// Finds the first file offset at or after `cursor` congruent to `vaddr`.
+///
+/// Saturates instead of overflowing when untrusted `p_vaddr` or `p_align`
+/// values push the result past `u64::MAX`.
 fn congruent(cursor: u64, vaddr: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         return cursor;
@@ -215,8 +228,8 @@ fn congruent(cursor: u64, vaddr: u64, alignment: u64) -> u64 {
     let current = cursor % alignment;
     match current.cmp(&target) {
         core::cmp::Ordering::Equal => cursor,
-        core::cmp::Ordering::Less => cursor + (target - current),
-        core::cmp::Ordering::Greater => cursor + (alignment - (current - target)),
+        core::cmp::Ordering::Less => cursor.saturating_add(target - current),
+        core::cmp::Ordering::Greater => cursor.saturating_add(alignment - (current - target)),
     }
 }
 
@@ -270,6 +283,11 @@ fn write_at(out: &mut Vec<u8>, offset: u64, bytes: &[u8]) -> Result<()> {
     let end = start
         .checked_add(bytes.len())
         .ok_or_else(|| Error::generic("image is too large"))?;
+    if end > MAX_IMAGE {
+        return Err(Error::generic(
+            "serialized image exceeds the 256 MiB layout limit",
+        ));
+    }
     if out.len() < end {
         out.resize(end, 0);
     }

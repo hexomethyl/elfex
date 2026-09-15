@@ -118,6 +118,9 @@ pub(crate) fn geometry(loads: impl Iterator<Item = (u64, u64, u64)>) -> ImageGeo
 }
 
 /// Computes the smallest multiple of `alignment` that is at least `value`.
+///
+/// Saturates instead of overflowing when `value` sits near `u64::MAX`, as
+/// untrusted `p_vaddr + p_memsz` combinations can produce.
 pub(crate) const fn align_up(value: u64, alignment: u64) -> u64 {
     if alignment <= 1 {
         return value;
@@ -126,6 +129,6 @@ pub(crate) const fn align_up(value: u64, alignment: u64) -> u64 {
     if remainder == 0 {
         value
     } else {
-        value + (alignment - remainder)
+        value.saturating_add(alignment - remainder)
     }
 }

@@ -3,7 +3,7 @@
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::header::ElfHeaders;
 use crate::program::{Segment, SegmentType};
 use crate::reader::{ReadAt, SliceReader};
@@ -99,12 +99,14 @@ impl ElfImage {
 
     fn read_file_layout<R: ReadAt>(reader: &R) -> Result<Self> {
         let headers = ElfHeaders::read_from(reader)?;
+        let source_size = reader.size();
         let mut segments = Vec::with_capacity(headers.program_headers.len());
         for header in &headers.program_headers {
             let data = if header.r#type.0 == SegmentType::NULL.0 || header.filesz == 0 {
                 Vec::new()
             } else {
-                reader.read_bytes_at(header.offset, length_usize(header.filesz))?
+                let len = checked_len(header.filesz, source_size)?;
+                reader.read_bytes_at(header.offset, len)?
             };
             segments.push(Segment {
                 header: *header,
@@ -123,6 +125,7 @@ impl ElfImage {
 
     fn read_mapped_layout<R: ReadAt>(reader: &R) -> Result<Self> {
         let headers = ElfHeaders::read_from(reader)?;
+        let source_size = reader.size();
         let image_base = compute_image_base(&headers.program_headers);
         let mut segments = Vec::with_capacity(headers.program_headers.len());
         for header in &headers.program_headers {
@@ -134,8 +137,9 @@ impl ElfImage {
             let data = if header.r#type.0 == SegmentType::NULL.0 || length == 0 {
                 Vec::new()
             } else {
+                let len = checked_len(length, source_size)?;
                 let start = header.vaddr.saturating_sub(image_base);
-                let mut data = alloc_vec(length);
+                let mut data = alloc::vec![0u8; len];
                 read_lenient(reader, start, &mut data);
                 data
             };
@@ -177,7 +181,8 @@ fn read_file_sections<R: ReadAt>(reader: &R, headers: &ElfHeaders) -> Result<Vec
         let data = if header.is_nobits() || header.size == 0 {
             Vec::new()
         } else {
-            reader.read_bytes_at(header.offset, length_usize(header.size))?
+            let len = checked_len(header.size, reader.size())?;
+            reader.read_bytes_at(header.offset, len)?
         };
         sections.push(Section {
             name: names
@@ -202,27 +207,30 @@ fn read_mapped_sections<R: ReadAt>(
     let strtab = raw
         .get(usize::from(headers.header.shstrndx))
         .filter(|header| header.r#type.0 == SectionType::STRTAB.0)
-        .map(|header| {
-            let mut data = alloc_vec(header.size);
+        .and_then(|header| {
+            let mut data = checked_alloc(header.size, reader.size()).ok()?;
             let start = if header.flags.is_alloc() {
                 header.addr.saturating_sub(image_base)
             } else {
                 header.offset
             };
             read_lenient(reader, start, &mut data);
-            data
+            Some(data)
         })
         .unwrap_or_default();
     let names = StringTable::new(&strtab);
     let mut sections = Vec::with_capacity(raw.len());
     for header in raw {
         let length = if header.is_nobits() { 0 } else { header.size };
+        let Ok(data) = checked_alloc(length, reader.size()) else {
+            continue;
+        };
+        let mut data = data;
         let start = if header.flags.is_alloc() {
             header.addr.saturating_sub(image_base)
         } else {
             header.offset
         };
-        let mut data = alloc_vec(length);
         read_lenient(reader, start, &mut data);
         sections.push(Section {
             name: names
@@ -244,9 +252,8 @@ fn section_names<R: ReadAt>(
     raw.get(usize::from(headers.header.shstrndx))
         .filter(|header| header.r#type.0 == SectionType::STRTAB.0)
         .and_then(|header| {
-            reader
-                .read_bytes_at(header.offset, length_usize(header.size))
-                .ok()
+            let len = checked_len(header.size, reader.size()).ok()?;
+            reader.read_bytes_at(header.offset, len).ok()
         })
         .map(|data| {
             let table = StringTable::new(&data);
@@ -291,12 +298,27 @@ fn read_lenient<R: ReadAt>(reader: &R, offset: u64, buffer: &mut [u8]) {
     }
 }
 
-fn alloc_vec(length: u64) -> Vec<u8> {
-    alloc::vec![0u8; length_usize(length)]
+/// Maximum single allocation for untrusted size fields (256 MiB).
+///
+/// Prevents an absurdly large header field from triggering an OOM or an
+/// address-sanitizer allocation-size error before the reader can reject it.
+const MAX_ALLOC: u64 = 256 * 1024 * 1024;
+
+/// Validates `length` against the source size and returns it as `usize`.
+fn checked_len(length: u64, source_size: Option<u64>) -> Result<usize> {
+    let cap = source_size.unwrap_or(MAX_ALLOC).min(MAX_ALLOC);
+    if length > cap {
+        return Err(Error::generic(
+            "ELF structure size exceeds the source or the allocation limit",
+        ));
+    }
+    Ok(usize::try_from(length).unwrap_or(usize::MAX))
 }
 
-fn length_usize(length: u64) -> usize {
-    usize::try_from(length).unwrap_or(usize::MAX)
+/// Allocates a zero-filled vector after validating `length`.
+fn checked_alloc(length: u64, source_size: Option<u64>) -> Result<Vec<u8>> {
+    let len = checked_len(length, source_size)?;
+    Ok(alloc::vec![0u8; len])
 }
 
 /// A reader that shifts every offset by a fixed base.
@@ -315,5 +337,38 @@ impl<R: ReadAt> ReadAt for OffsetReader<'_, R> {
 
     fn size(&self) -> Option<u64> {
         self.inner.size().map(|size| size.saturating_sub(self.base))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    /// Builds a minimal ELF64 file with one `PT_LOAD` segment whose size
+    /// fields hold the fuzzer-found value `0x7863_6148_0003_1337`.
+    fn elf_with_huge_segment_size() -> Vec<u8> {
+        let mut data = vec![0u8; 64 + 56];
+        data[0..4].copy_from_slice(b"\x7fELF");
+        data[4] = 2; // ELFCLASS64
+        data[5] = 1; // ELFDATA2LSB
+        data[6] = 1; // EV_CURRENT
+        data[16..18].copy_from_slice(&2u16.to_le_bytes()); // e_type = ET_EXEC
+        data[18..20].copy_from_slice(&62u16.to_le_bytes()); // e_machine = EM_X86_64
+        data[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+        data[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        data[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+        let phdr = &mut data[64..];
+        phdr[0..4].copy_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+        phdr[32..40].copy_from_slice(&0x7863_6148_0003_1337u64.to_le_bytes()); // p_filesz
+        phdr[40..48].copy_from_slice(&0x7863_6148_0003_1337u64.to_le_bytes()); // p_memsz
+        data
+    }
+
+    #[test]
+    fn huge_segment_size_is_rejected_not_allocated() {
+        let data = elf_with_huge_segment_size();
+        assert!(ElfImage::parse(&data).is_err());
+        assert!(ElfImage::parse_mapped(&data).is_err());
     }
 }
