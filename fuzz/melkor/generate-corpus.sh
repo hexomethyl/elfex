@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+In#!/usr/bin/env bash
 set -euo pipefail
 
 # Directory layout

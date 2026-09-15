@@ -112,3 +112,36 @@ jobs:
 
       - name: Documentation (no_std + alloc)
         run: cargo +1.88.0 doc --no-deps --no-default-features
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nightly toolchain
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+
+      - name: Cache cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: ${{ runner.os }}-fuzz-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-fuzz-cargo-
+
+      - name: Generate Melkor corpus
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-multilib
+          COUNT=250 fuzz/melkor/generate-corpus.sh
+
+      - name: Fuzz fuzz-elf-headers (120s)
+        run: cargo +nightly fuzz run fuzz-elf-headers fuzz/corpus/fuzz-elf-headers -- -max_total_time=120
+
+      - name: Fuzz fuzz-elf-parse (300s)
+        run: cargo +nightly fuzz run fuzz-elf-parse fuzz/corpus/fuzz-elf-parse -- -max_total_time=300
