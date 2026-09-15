@@ -73,10 +73,8 @@ println!("64-bit: {}", image.is_64bit());
 println!("entry point: {:#x}", image.entry_point());
 println!("image base: {:#x}", image.image_base());
 
-if let Ok(Some(dynamic)) = image.dynamic() {
-    for lib in dynamic.needed(&image) {
-        println!("needs {lib}");
-    }
+for lib in image.needed_libraries()? {
+    println!("needs {lib}");
 }
 # Ok::<(), elfex::Error>(())
 ```
@@ -197,6 +195,33 @@ cargo doc --no-deps --no-default-features
 
 Warnings are denied by the package manifest, so the policy also applies to
 direct Cargo commands.
+
+## Fuzzing
+
+Fuzz targets live under `fuzz/` and can be run with `cargo-fuzz` on
+Linux/macOS or WSL:
+
+```bash
+cargo +nightly fuzz run fuzz-elf-parse
+cargo +nightly fuzz run fuzz-elf-headers
+```
+
+A corpus generation script uses
+[Melkor](https://github.com/IOActive/Melkor_ELF_Fuzzer) to produce
+domain-aware mutated ELFs as seed inputs:
+
+```bash
+# Generate 500 mutations per seed (default); override with COUNT=N
+fuzz/melkor/generate-corpus.sh
+
+# Then fuzz with the Melkor-seeded corpus
+cargo +nightly fuzz run fuzz-elf-parse fuzz/corpus/fuzz-elf-parse
+```
+
+The script clones and builds Melkor automatically on first run. It compiles
+a minimal seed ELF (64-bit, and 32-bit if `gcc -m32` is available), then
+runs Melkor with all metadata mutation categories (`-A`). The mutated
+files are deposited into `fuzz/corpus/` for each fuzz target.
 
 ## License
 

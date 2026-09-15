@@ -391,9 +391,9 @@ fn add_rela(
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
     use super::*;
     use crate::notes::NT_GNU_BUILD_ID;
+    use alloc::vec;
 
     fn code_flags() -> SegmentFlags {
         SegmentFlags(SegmentFlags::READ | SegmentFlags::EXECUTE)

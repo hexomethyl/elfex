@@ -235,6 +235,28 @@ impl ElfImage {
             .map(|segment| TlsInfo::from_header(&segment.header))
     }
 
+    /// Returns the names of every shared object this image depends on.
+    ///
+    /// This is a convenience wrapper that parses the dynamic table and
+    /// resolves `DT_NEEDED` entries through the `.dynstr` string table.
+    /// Returns an empty list when there is no dynamic segment or no
+    /// string table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] when the dynamic segment cannot be decoded.
+    pub fn needed_libraries(&self) -> Result<Vec<alloc::string::String>> {
+        let Some(dynamic) = self.dynamic()? else {
+            return Ok(Vec::new());
+        };
+        let strtab_bytes = self
+            .section_by_name(".dynstr")
+            .map(|section| &section.data[..])
+            .unwrap_or(&[]);
+        let strtab = crate::strtab::StringTable::new(strtab_bytes);
+        Ok(dynamic.needed(strtab))
+    }
+
     fn symbols_from(&self, table: &str, strings: &str) -> Result<SymbolTable> {
         let Some(data) = self.section_by_name(table).map(|section| &section.data) else {
             return Ok(SymbolTable::default());
