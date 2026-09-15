@@ -1,0 +1,24 @@
+[package]
+name = "elfex"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A no_std-friendly parser, editor, and builder for raw and mapped ELF executable images"
+license = "MIT"
+repository = "https://github.com/hexomethyl/elfex"
+readme = "README.md"
+keywords = ["elf", "executable", "linux", "binary", "parser"]
+categories = ["parsing", "development-tools"]
+
+[features]
+default = ["std"]
+std = []
+
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = "deny"
+
+[lints.rustdoc]
+all = "deny"
