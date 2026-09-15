@@ -4,10 +4,9 @@
 //! third-party dependencies. It is `no_std` with `extern crate alloc`; the
 //! default `std` feature adds file entry points and `std::io` error support.
 //!
-//! The crate mirrors the parse, edit, rebuild, and mapped-image capabilities of
-//! a Portable Executable reader. ELF has no relative virtual address, so `elfex`
-//! uses an image-relative offset `ioff = vaddr - image_base` as the direct
-//! analog of a PE relative virtual address.
+//! ELF has no relative virtual address, so `elfex` defines an image-relative
+//! offset `ioff = vaddr - image_base` as a uniform addressing model across
+//! raw files, loader-mapped images, and relocated images.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

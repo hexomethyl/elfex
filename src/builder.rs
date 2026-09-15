@@ -391,6 +391,7 @@ fn add_rela(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use super::*;
     use crate::notes::NT_GNU_BUILD_ID;
 
