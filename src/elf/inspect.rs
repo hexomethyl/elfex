@@ -257,6 +257,32 @@ impl ElfImage {
         Ok(dynamic.needed(strtab))
     }
 
+    /// Returns the defined global and weak symbols from the dynamic symbol
+    /// table.
+    ///
+    /// These are the symbols this image makes available to other shared
+    /// objects — the ELF analog of a PE export table.  Undefined symbols
+    /// (`shndx == 0`) and local symbols are excluded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] when the dynamic symbol table cannot be
+    /// decoded.
+    pub fn exports(&self) -> Result<Vec<crate::symbol::Symbol>> {
+        let table = self.dynamic_symbols()?;
+        Ok(table
+            .symbols
+            .into_iter()
+            .filter(|sym| {
+                sym.shndx != 0
+                    && matches!(
+                        sym.bind,
+                        crate::symbol::SymbolBind::Global | crate::symbol::SymbolBind::Weak
+                    )
+            })
+            .collect())
+    }
+
     fn symbols_from(&self, table: &str, strings: &str) -> Result<SymbolTable> {
         let Some(data) = self.section_by_name(table).map(|section| &section.data) else {
             return Ok(SymbolTable::default());

@@ -157,6 +157,8 @@ impl ElfImage {
             ));
         }
         let mut image = alloc::vec![0u8; span];
+
+        // Place each loadable segment at its mapped address.
         for segment in &self.segments {
             if segment.header.r#type.0 != SegmentType::LOAD.0 {
                 continue;
@@ -170,6 +172,28 @@ impl ElfImage {
             let count = segment.data.len().min(image.len().saturating_sub(start));
             image[start..start + count].copy_from_slice(&segment.data[..count]);
         }
+
+        // Write the ELF header and program header table at offset 0 of the
+        // mapped image, after segment data so the header is always present.
+        // A real loader maps the first `PT_LOAD` (which normally starts at
+        // file offset 0) and the headers appear at the image base.  The
+        // builder writes them explicitly so `read_mapped_from` finds valid
+        // headers even when no segment covers offset 0.
+        let class = self.ident.class;
+        let endian = self.ident.data;
+        let mut header = self.header;
+        header.ehsize = u16::try_from(ElfHeader::size(class)).unwrap_or(0);
+        header.phentsize = u16::try_from(ProgramHeader::size(class)).unwrap_or(0);
+        header.phnum = u16::try_from(self.segments.len()).unwrap_or(0);
+        header.phoff = ElfHeader::size(class);
+        let mut hdr_buf = Vec::new();
+        header.write(&mut hdr_buf);
+        for segment in &self.segments {
+            segment.header.write(&mut hdr_buf, endian, class);
+        }
+        let hdr_end = hdr_buf.len().min(image.len());
+        image[..hdr_end].copy_from_slice(&hdr_buf[..hdr_end]);
+
         if base != image_base {
             self.apply_relative_relocations(&mut image, base)?;
         }

@@ -7,6 +7,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::dynamic::DynTag;
 use crate::elf::ElfImage;
 use crate::error::Result;
 use crate::header::{ElfHeader, ElfType, Machine};
@@ -28,6 +29,8 @@ pub struct ElfBuilder {
     loads: Vec<LoadSpec>,
     notes: Vec<NoteSpec>,
     relocations: Vec<RelocationEntry>,
+    tls: Option<TlsSpec>,
+    needed: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +46,14 @@ struct NoteSpec {
     name: String,
     note_type: u32,
     descriptor: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct TlsSpec {
+    vaddr: u64,
+    data: Vec<u8>,
+    memsz: u64,
+    align: u64,
 }
 
 impl Default for ElfBuilder {
@@ -66,6 +77,8 @@ impl ElfBuilder {
             loads: Vec::new(),
             notes: Vec::new(),
             relocations: Vec::new(),
+            tls: None,
+            needed: Vec::new(),
         }
     }
 
@@ -175,6 +188,29 @@ impl ElfBuilder {
         self
     }
 
+    /// Adds a thread-local storage template segment.
+    ///
+    /// `data` holds the initialized bytes. `memsz` is the total per-thread
+    /// size (≥ data length for zero-filled `.tbss`). `align` is the TLS
+    /// alignment.
+    #[must_use]
+    pub fn add_tls(mut self, vaddr: u64, data: Vec<u8>, memsz: u64, align: u64) -> Self {
+        self.tls = Some(TlsSpec {
+            vaddr,
+            data,
+            memsz,
+            align,
+        });
+        self
+    }
+
+    /// Adds a shared-library dependency (`DT_NEEDED` entry).
+    #[must_use]
+    pub fn add_dynamic_needed(mut self, name: impl Into<String>) -> Self {
+        self.needed.push(name.into());
+        self
+    }
+
     /// Builds the [`ElfImage`].
     ///
     /// # Errors
@@ -211,7 +247,31 @@ impl ElfBuilder {
             });
         }
 
+        if let Some(tls) = &self.tls {
+            let filesz = u64::try_from(tls.data.len()).unwrap_or(0);
+            segments.push(Segment {
+                header: ProgramHeader {
+                    r#type: SegmentType::TLS,
+                    flags: SegmentFlags(SegmentFlags::READ),
+                    offset: 0,
+                    vaddr: tls.vaddr,
+                    paddr: tls.vaddr,
+                    filesz,
+                    memsz: tls.memsz,
+                    align: tls.align,
+                },
+                data: tls.data.clone(),
+            });
+        }
+
         add_notes(&self.notes, self.endian, &mut segments, &mut sections);
+        add_dynamic(
+            &self.needed,
+            self.endian,
+            self.class,
+            &mut segments,
+            &mut sections,
+        );
         add_rela(&self.relocations, self.endian, self.class, &mut sections);
 
         let header = ElfHeader {
@@ -389,6 +449,107 @@ fn add_rela(
     });
 }
 
+fn add_dynamic(
+    needed: &[String],
+    endian: Endian,
+    class: ElfClass,
+    segments: &mut Vec<Segment>,
+    sections: &mut Vec<Section>,
+) {
+    if needed.is_empty() {
+        return;
+    }
+
+    // Build the .dynstr string table: leading NUL, then each name
+    // NUL-terminated.
+    let mut dynstr = alloc::vec![0u8]; // initial NUL
+    let mut name_offsets: Vec<usize> = Vec::new();
+    for name in needed {
+        name_offsets.push(dynstr.len());
+        dynstr.extend_from_slice(name.as_bytes());
+        dynstr.push(0);
+    }
+    let dynstr_len = u64::try_from(dynstr.len()).unwrap_or(0);
+
+    // Serialize the dynamic entries.
+    let mut dyn_data: Vec<u8> = Vec::new();
+    let push_entry = |out: &mut Vec<u8>, tag: u64, value: u64| match class {
+        ElfClass::Elf64 => {
+            out.extend_from_slice(&endian.u64_bytes(tag));
+            out.extend_from_slice(&endian.u64_bytes(value));
+        }
+        ElfClass::Elf32 => {
+            out.extend_from_slice(&endian.u32_bytes(crate::low32(tag)));
+            out.extend_from_slice(&endian.u32_bytes(crate::low32(value)));
+        }
+    };
+
+    for &name_offset in &name_offsets {
+        let offset = u64::try_from(name_offset).unwrap_or(0);
+        push_entry(&mut dyn_data, DynTag::NEEDED.value(), offset);
+    }
+    push_entry(&mut dyn_data, DynTag::STRTAB.value(), 0); // placeholder
+    push_entry(&mut dyn_data, DynTag::STRSZ.value(), dynstr_len);
+    push_entry(&mut dyn_data, DynTag::NULL.value(), 0);
+
+    let dyn_len = u64::try_from(dyn_data.len()).unwrap_or(0);
+    let dyn_entsize: u64 = match class {
+        ElfClass::Elf64 => 16,
+        ElfClass::Elf32 => 8,
+    };
+
+    // PT_DYNAMIC segment.
+    segments.push(Segment {
+        header: ProgramHeader {
+            r#type: SegmentType::DYNAMIC,
+            flags: SegmentFlags(SegmentFlags::READ | SegmentFlags::WRITE),
+            offset: 0,
+            vaddr: 0,
+            paddr: 0,
+            filesz: dyn_len,
+            memsz: dyn_len,
+            align: 8,
+        },
+        data: dyn_data.clone(),
+    });
+
+    // .dynstr section.
+    sections.push(Section {
+        header: SectionHeader {
+            name_index: 0,
+            r#type: SectionType::STRTAB,
+            flags: SectionFlags(SectionFlags::ALLOC),
+            addr: 0,
+            offset: 0,
+            size: dynstr_len,
+            link: 0,
+            info: 0,
+            addralign: 1,
+            entsize: 0,
+        },
+        name: ".dynstr".into(),
+        data: dynstr,
+    });
+
+    // .dynamic section.
+    sections.push(Section {
+        header: SectionHeader {
+            name_index: 0,
+            r#type: SectionType::DYNAMIC,
+            flags: SectionFlags(SectionFlags::ALLOC | SectionFlags::WRITE),
+            addr: 0,
+            offset: 0,
+            size: dyn_len,
+            link: 0,
+            info: 0,
+            addralign: 8,
+            entsize: dyn_entsize,
+        },
+        name: ".dynamic".into(),
+        data: dyn_data,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,5 +617,54 @@ mod tests {
             .expect("notes parse")
             .expect("a build-id note exists");
         assert_eq!(id, build_id);
+    }
+
+    #[test]
+    fn tls_round_trip() {
+        let tls_data = vec![0x42; 16];
+        let image = ElfBuilder::new()
+            .entry(0x40_1000)
+            .add_load(0x40_1000, code_flags(), vec![0xf4])
+            .add_tls(0x40_3000, tls_data.clone(), 32, 8)
+            .build();
+
+        let tls = image.tls().expect("a PT_TLS segment exists");
+        assert_eq!(tls.template_vaddr(), 0x40_3000);
+        assert_eq!(tls.file_size(), 16);
+        assert_eq!(tls.mem_size(), 32);
+        assert_eq!(tls.align(), 8);
+    }
+
+    #[test]
+    fn dynamic_needed_round_trip() {
+        let image = ElfBuilder::new()
+            .entry(0x40_1000)
+            .add_load(0x40_1000, code_flags(), vec![0xf4])
+            .add_dynamic_needed("libc.so.6")
+            .add_dynamic_needed("libm.so.6")
+            .build();
+
+        let needed = image.needed_libraries().expect("dynamic table parses");
+        assert_eq!(needed, vec!["libc.so.6", "libm.so.6"]);
+    }
+
+    #[test]
+    fn mapped_image_round_trip() {
+        let image = ElfBuilder::new()
+            .machine(Machine::X86_64)
+            .elf_type(ElfType::Exec)
+            .entry(0x40_1000)
+            .add_load(0x40_0000, SegmentFlags(SegmentFlags::READ), vec![0; 0x1000])
+            .add_load(0x40_1000, code_flags(), vec![0xf4, 0xc3])
+            .build();
+
+        let mapped = image
+            .to_mapped_image()
+            .expect("the test ELF produces a mapped image");
+        let reparsed = ElfImage::parse_mapped(&mapped).expect("the mapped image re-parses");
+
+        assert_eq!(reparsed.entry_point(), 0x40_1000);
+        assert_eq!(reparsed.image_base(), 0x40_0000);
+        assert_eq!(reparsed.read_at_ioff(0x1000, 2), Some(&[0xf4, 0xc3][..]),);
     }
 }

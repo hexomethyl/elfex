@@ -177,7 +177,7 @@ fn read_file_sections<R: ReadAt>(reader: &R, headers: &ElfHeaders) -> Result<Vec
     let raw = read_section_headers(reader, headers)?;
     let names = section_names(reader, headers, &raw);
     let mut sections = Vec::with_capacity(raw.len());
-    for header in raw {
+    for (index, header) in raw.into_iter().enumerate() {
         let data = if header.is_nobits() || header.size == 0 {
             Vec::new()
         } else {
@@ -185,10 +185,7 @@ fn read_file_sections<R: ReadAt>(reader: &R, headers: &ElfHeaders) -> Result<Vec
             reader.read_bytes_at(header.offset, len)?
         };
         sections.push(Section {
-            name: names
-                .get(usize::try_from(header.name_index).unwrap_or(0))
-                .cloned()
-                .unwrap_or_default(),
+            name: names.get(index).cloned().unwrap_or_default(),
             header,
             data,
         });
