@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Regenerate `corpus.manifest` from the vendored ELF files.
+
+This is an *independent* ELF decoder (it shares no code with `elfex`) that reads
+the raw header, section-header table, program-header table, and dynamic array
+straight from each file's bytes. Its output is the oracle the Rust corpus tests
+assert `elfex` against. Cross-checked against GNU `readelf` (see PROVENANCE.md).
+
+Usage:  python3 generate_manifest.py > corpus.manifest
+"""
+
+import hashlib
+import struct
+import sys
+from pathlib import Path
+
+CORPUS = Path(__file__).parent
+DIRS = ["rizin", "elfutils"]
+
+DT_NEEDED = 1
+SHT_STRTAB = 3
+PT_DYNAMIC = 2
+
+
+def u(data, off, size, le):
+    return int.from_bytes(data[off:off + size], "little" if le else "big")
+
+
+def decode(path):
+    b = path.read_bytes()
+    assert b[:4] == b"\x7fELF", f"{path}: not ELF"
+    ei_class = b[4]          # 1 = 32, 2 = 64
+    ei_data = b[5]           # 1 = little, 2 = big
+    le = ei_data == 1
+    is64 = ei_class == 2
+    W = 8 if is64 else 4
+
+    e_type = u(b, 16, 2, le)
+    e_machine = u(b, 18, 2, le)
+    if is64:
+        e_entry = u(b, 24, 8, le)
+        e_phoff = u(b, 32, 8, le)
+        e_shoff = u(b, 40, 8, le)
+        e_phentsize = u(b, 54, 2, le)
+        e_phnum = u(b, 56, 2, le)
+        e_shentsize = u(b, 58, 2, le)
+        e_shnum = u(b, 60, 2, le)
+        e_shstrndx = u(b, 62, 2, le)
+    else:
+        e_entry = u(b, 24, 4, le)
+        e_phoff = u(b, 28, 4, le)
+        e_shoff = u(b, 32, 4, le)
+        e_phentsize = u(b, 42, 2, le)
+        e_phnum = u(b, 44, 2, le)
+        e_shentsize = u(b, 46, 2, le)
+        e_shnum = u(b, 48, 2, le)
+        e_shstrndx = u(b, 50, 2, le)
+
+    # Section headers.
+    sections = []  # (type, addr, size, name_off, offset)
+    for i in range(e_shnum):
+        base = e_shoff + i * e_shentsize
+        sh_name = u(b, base, 4, le)
+        sh_type = u(b, base + 4, 4, le)
+        if is64:
+            sh_addr = u(b, base + 16, 8, le)
+            sh_offset = u(b, base + 24, 8, le)
+            sh_size = u(b, base + 32, 8, le)
+        else:
+            sh_addr = u(b, base + 12, 4, le)
+            sh_offset = u(b, base + 16, 4, le)
+            sh_size = u(b, base + 20, 4, le)
+        sections.append([sh_type, sh_addr, sh_size, sh_name, sh_offset])
+
+    # Resolve section names via .shstrtab.
+    names = ["" for _ in sections]
+    if e_shnum and e_shstrndx < e_shnum:
+        strtab_off = sections[e_shstrndx][4]
+        strtab_size = sections[e_shstrndx][2]
+        blob = b[strtab_off:strtab_off + strtab_size]
+        for i, s in enumerate(sections):
+            no = s[3]
+            end = blob.find(b"\x00", no)
+            names[i] = blob[no:end].decode("latin-1")
+
+    # Program headers.
+    segments = []  # (type, vaddr, filesz, memsz)
+    for i in range(e_phnum):
+        base = e_phoff + i * e_phentsize
+        p_type = u(b, base, 4, le)
+        if is64:
+            p_vaddr = u(b, base + 16, 8, le)
+            p_filesz = u(b, base + 32, 8, le)
+            p_memsz = u(b, base + 40, 8, le)
+        else:
+            p_vaddr = u(b, base + 8, 4, le)
+            p_filesz = u(b, base + 16, 4, le)
+            p_memsz = u(b, base + 20, 4, le)
+        segments.append((p_type, p_vaddr, p_filesz, p_memsz))
+
+    # DT_NEEDED via .dynstr section (matches how elfex resolves needed libs).
+    needed = []
+    dynstr = next((s for s, n in zip(sections, names) if n == ".dynstr"), None)
+    dyn = next((s for s in segments if s[0] == PT_DYNAMIC), None)
+    if dyn and dynstr:
+        # locate PT_DYNAMIC file range
+        for i in range(e_phnum):
+            base = e_phoff + i * e_phentsize
+            if u(b, base, 4, le) != PT_DYNAMIC:
+                continue
+            d_off = u(b, base + (8 if is64 else 4), W, le)
+            d_sz = u(b, base + (32 if is64 else 16), W, le)
+            ds_off, ds_size = dynstr[4], dynstr[2]
+            sblob = b[ds_off:ds_off + ds_size]
+            ent = 2 * W
+            for j in range(0, d_sz, ent):
+                tag = u(b, d_off + j, W, le)
+                val = u(b, d_off + j + W, W, le)
+                if tag == 0:
+                    break
+                if tag == DT_NEEDED:
+                    end = sblob.find(b"\x00", val)
+                    needed.append(sblob[val:end].decode("latin-1"))
+            break
+
+    return {
+        "class": 64 if is64 else 32,
+        "endian": "little" if le else "big",
+        "machine": e_machine,
+        "type": e_type,
+        "entry": e_entry,
+        "phnum": e_phnum,
+        "shnum": e_shnum,
+        "sha256": hashlib.sha256(b).hexdigest(),
+        "sections": [(t, a, sz, nm) for (t, a, sz, _no, _off), nm in zip(sections, names)],
+        "segments": segments,
+        "needed": needed,
+    }
+
+
+def main():
+    files = []
+    for d in DIRS:
+        for p in sorted((CORPUS / d).iterdir()):
+            if p.is_file():
+                files.append(p)
+    out = []
+    out.append("# Auto-generated by generate_manifest.py. Do not edit by hand.")
+    out.append("# Oracle for the elfex corpus tests: an independent raw-ELF decode")
+    out.append("# of each vendored file, cross-checked against GNU readelf.")
+    out.append("# Numbers are decimal. Section/segment records are in table order.")
+    out.append("")
+    for p in files:
+        m = decode(p)
+        rel = p.relative_to(CORPUS).as_posix()
+        out.append(f"file {rel}")
+        out.append(f"sha256 {m['sha256']}")
+        out.append(f"class {m['class']}")
+        out.append(f"endian {m['endian']}")
+        out.append(f"machine {m['machine']}")
+        out.append(f"type {m['type']}")
+        out.append(f"entry {m['entry']}")
+        out.append(f"phnum {m['phnum']}")
+        out.append(f"shnum {m['shnum']}")
+        for n in m["needed"]:
+            out.append(f"needed {n}")
+        for i, (t, a, sz, nm) in enumerate(m["sections"]):
+            out.append(f'sec {i} {t} {a} {sz} "{nm}"')
+        for i, (t, v, fs, ms) in enumerate(m["segments"]):
+            out.append(f"seg {i} {t} {v} {fs} {ms}")
+        out.append("end")
+        out.append("")
+    sys.stdout.write("\n".join(out))
+
+
+if __name__ == "__main__":
+    main()
