@@ -12,6 +12,8 @@ repository = "https://github.com/hexomethyl/elfex"
 readme = "README.md"
 keywords = ["elf", "executable", "linux", "binary", "parser"]
 categories = ["parsing", "development-tools"]
+documentation = "https://docs.rs/elfex"
+exclude = ["/tests/corpus/", "/fuzz/", "/.github/"]
 
 [features]
 default = ["std"]
