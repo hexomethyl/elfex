@@ -1,0 +1,20 @@
+/* Version script for libfeature.so.
+ *
+ * Produces two version definitions in .gnu.version_d, binds each exported
+ * symbol to one of them, and localizes everything else. */
+
+FEATURE_1.0 {
+  global:
+    feature_v1;
+    feature_common;
+    feature_counter;
+    feature_tls;
+    feature_tls_get;
+  local:
+    *;
+};
+
+FEATURE_2.0 {
+  global:
+    feature_v2;
+} FEATURE_1.0;

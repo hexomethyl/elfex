@@ -193,21 +193,34 @@ impl ElfImage {
         Ok(tables)
     }
 
-    /// Parses every note from `PT_NOTE` segments and `SHT_NOTE` sections.
+    /// Parses every note in the object.
+    ///
+    /// Notes are read from `PT_NOTE` segments, the authoritative runtime view.
+    /// An object with no `PT_NOTE` segment — an unlinked relocatable object,
+    /// for instance — is read from its `SHT_NOTE` sections instead. In a
+    /// linked object the two views describe the same bytes, so only one is
+    /// used and no note is reported twice.
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error`] when a note cannot be decoded.
     pub fn notes(&self) -> Result<Vec<Note>> {
         let mut notes = Vec::new();
-        for segment in &self.segments {
-            if segment.header.r#type.0 == SegmentType::NOTE.0 {
-                notes.extend(Note::parse_all(&segment.data, self.ident.data)?);
+        let mapped = self
+            .segments
+            .iter()
+            .any(|segment| segment.header.r#type.0 == SegmentType::NOTE.0);
+        if mapped {
+            for segment in &self.segments {
+                if segment.header.r#type.0 == SegmentType::NOTE.0 {
+                    notes.extend(Note::parse_all(&segment.data, self.ident.data)?);
+                }
             }
-        }
-        for section in &self.sections {
-            if section.header.r#type.0 == SectionType::NOTE.0 {
-                notes.extend(Note::parse_all(&section.data, self.ident.data)?);
+        } else {
+            for section in &self.sections {
+                if section.header.r#type.0 == SectionType::NOTE.0 {
+                    notes.extend(Note::parse_all(&section.data, self.ident.data)?);
+                }
             }
         }
         Ok(notes)

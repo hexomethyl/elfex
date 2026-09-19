@@ -197,3 +197,144 @@ pub const fn relocation_width(machine: Machine, r_type: u32) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::{RelocKind, RelocationSection, relocation_kind, relocation_width};
+    use crate::header::Machine;
+    use crate::ident::{ElfClass, Endian};
+
+    const X86_64: Machine = Machine(62);
+    const I386: Machine = Machine(3);
+
+    /// Every x86-64 dynamic relocation type the corpus can produce, plus the
+    /// four-byte forms and the deliberately unclassified ones.
+    #[test]
+    fn x86_64_relocations_classify_and_size() {
+        for (r_type, kind, width) in [
+            (1u32, RelocKind::Absolute, Some(8u8)),
+            (2, RelocKind::Other, Some(4)),
+            (5, RelocKind::Copy, Some(8)),
+            (6, RelocKind::GlobalData, Some(8)),
+            (7, RelocKind::JumpSlot, Some(8)),
+            (8, RelocKind::Relative, Some(8)),
+            (10, RelocKind::Other, Some(4)),
+            (11, RelocKind::Other, Some(4)),
+            (16, RelocKind::Tls, Some(8)),
+            (17, RelocKind::Tls, Some(8)),
+            (18, RelocKind::Tls, Some(8)),
+            (4, RelocKind::Other, None),
+            (37, RelocKind::Other, None),
+        ] {
+            assert_eq!(
+                relocation_kind(X86_64, r_type),
+                kind,
+                "x86-64 type {r_type} kind"
+            );
+            assert_eq!(
+                relocation_width(X86_64, r_type),
+                width,
+                "x86-64 type {r_type} width"
+            );
+        }
+    }
+
+    /// The i386 table classifies the same purposes at half the width, and
+    /// leaves the TLS forms unsized because their storage is model-specific.
+    #[test]
+    fn i386_relocations_classify_and_size() {
+        for (r_type, kind, width) in [
+            (1u32, RelocKind::Absolute, Some(4u8)),
+            (5, RelocKind::Copy, Some(4)),
+            (6, RelocKind::GlobalData, Some(4)),
+            (7, RelocKind::JumpSlot, Some(4)),
+            (8, RelocKind::Relative, Some(4)),
+            (14, RelocKind::Tls, None),
+            (15, RelocKind::Tls, None),
+            (35, RelocKind::Tls, None),
+            (36, RelocKind::Tls, None),
+            (37, RelocKind::Tls, None),
+            (2, RelocKind::Other, None),
+        ] {
+            assert_eq!(relocation_kind(I386, r_type), kind, "i386 type {r_type} kind");
+            assert_eq!(
+                relocation_width(I386, r_type),
+                width,
+                "i386 type {r_type} width"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_machine_classifies_nothing() {
+        for r_type in [1u32, 5, 6, 7, 8, 16] {
+            assert_eq!(relocation_kind(Machine(0), r_type), RelocKind::Other);
+            assert_eq!(relocation_width(Machine(0), r_type), None);
+        }
+    }
+
+    /// `r_info` packs the symbol index above the type, but the split point
+    /// differs by class: 32 bits for ELF64 and 8 bits for ELF32.
+    #[test]
+    fn the_r_info_split_differs_by_class() {
+        let mut rela = Vec::new();
+        rela.extend_from_slice(&0x1000u64.to_le_bytes());
+        rela.extend_from_slice(&(((0x1234u64) << 32) | 8).to_le_bytes());
+        rela.extend_from_slice(&(-8i64).to_le_bytes());
+        let table = RelocationSection::parse(&rela, true, Endian::Little, ElfClass::Elf64)
+            .expect("a whole RELA entry decodes");
+        assert!(table.is_rela());
+        let entry = table.entries()[0];
+        assert_eq!(entry.offset, 0x1000);
+        assert_eq!(entry.symbol, 0x1234);
+        assert_eq!(entry.r_type, 8);
+        assert_eq!(entry.addend, Some(-8));
+
+        let mut rel = Vec::new();
+        rel.extend_from_slice(&0x2000u32.to_le_bytes());
+        rel.extend_from_slice(&(((0x5678u32) << 8) | 6).to_le_bytes());
+        let table = RelocationSection::parse(&rel, false, Endian::Little, ElfClass::Elf32)
+            .expect("a whole REL entry decodes");
+        assert!(!table.is_rela());
+        let entry = table.entries()[0];
+        assert_eq!(entry.offset, 0x2000);
+        assert_eq!(entry.symbol, 0x5678);
+        assert_eq!(entry.r_type, 6);
+        assert_eq!(entry.addend, None, "a REL entry has no explicit addend");
+    }
+
+    #[test]
+    fn big_endian_entries_decode_with_the_declared_byte_order() {
+        let mut rela = Vec::new();
+        rela.extend_from_slice(&0x1000u64.to_be_bytes());
+        rela.extend_from_slice(&(((7u64) << 32) | 6).to_be_bytes());
+        rela.extend_from_slice(&0x20i64.to_be_bytes());
+        let table = RelocationSection::parse(&rela, true, Endian::Big, ElfClass::Elf64)
+            .expect("a big-endian RELA entry decodes");
+        let entry = table.entries()[0];
+        assert_eq!(entry.offset, 0x1000);
+        assert_eq!(entry.symbol, 7);
+        assert_eq!(entry.r_type, 6);
+        assert_eq!(entry.addend, Some(0x20));
+    }
+
+    #[test]
+    fn a_table_that_is_not_whole_entries_is_rejected() {
+        let error = RelocationSection::parse(&[0u8; 7], false, Endian::Little, ElfClass::Elf32)
+            .expect_err("seven bytes is not a whole number of REL entries");
+        assert!(
+            alloc::format!("{error:?}").contains("relocation table"),
+            "the error should name the relocation table: {error:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_table_decodes_to_no_entries() {
+        let table = RelocationSection::parse(&[], true, Endian::Little, ElfClass::Elf64)
+            .expect("an empty table is valid");
+        assert!(table.entries().is_empty());
+        assert!(table.is_rela());
+    }
+}

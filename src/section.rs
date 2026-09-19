@@ -36,12 +36,22 @@ impl SectionType {
     pub const NOBITS: Self = Self(8);
     /// Relocation entries without explicit addends.
     pub const REL: Self = Self(9);
+    /// Reserved, with unspecified semantics.
+    pub const SHLIB: Self = Self(10);
     /// Dynamic linker symbol table.
     pub const DYNSYM: Self = Self(11);
     /// Array of constructors.
     pub const INIT_ARRAY: Self = Self(14);
     /// Array of destructors.
     pub const FINI_ARRAY: Self = Self(15);
+    /// Array of pre-constructors.
+    pub const PREINIT_ARRAY: Self = Self(16);
+    /// Section group.
+    pub const GROUP: Self = Self(17);
+    /// Extended section indices for a symbol table.
+    pub const SYMTAB_SHNDX: Self = Self(18);
+    /// Packed relative relocation entries.
+    pub const RELR: Self = Self(19);
     /// GNU-style symbol hash table.
     pub const GNU_HASH: Self = Self(0x6fff_fff6);
     /// GNU version definitions.

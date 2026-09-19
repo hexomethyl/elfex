@@ -79,8 +79,38 @@ impl DynTag {
     pub const RUNPATH: Self = Self(29);
     /// Generic dynamic flags.
     pub const FLAGS: Self = Self(30);
+    /// Marks the start of the encoded tag range.
+    pub const ENCODING: Self = Self(31);
+    /// Address of the pre-init-function array.
+    pub const PREINIT_ARRAY: Self = Self(32);
+    /// Size of the pre-init-function array.
+    pub const PREINIT_ARRAYSZ: Self = Self(33);
+    /// Address of the extended section index table.
+    pub const SYMTAB_SHNDX: Self = Self(34);
+    /// Total size of the RELR relocation table.
+    pub const RELRSZ: Self = Self(35);
+    /// Address of the RELR relocation table.
+    pub const RELR: Self = Self(36);
+    /// Size of one RELR entry.
+    pub const RELRENT: Self = Self(37);
     /// Address of the GNU-style hash table.
     pub const GNU_HASH: Self = Self(0x6fff_fef5);
+    /// Address of the version symbol table.
+    pub const VERSYM: Self = Self(0x6fff_fff0);
+    /// Number of relative relocations in the RELA table.
+    pub const RELACOUNT: Self = Self(0x6fff_fff9);
+    /// Number of relative relocations in the REL table.
+    pub const RELCOUNT: Self = Self(0x6fff_fffa);
+    /// State flags for this object.
+    pub const FLAGS_1: Self = Self(0x6fff_fffb);
+    /// Address of the version definition table.
+    pub const VERDEF: Self = Self(0x6fff_fffc);
+    /// Number of version definitions.
+    pub const VERDEFNUM: Self = Self(0x6fff_fffd);
+    /// Address of the version dependency table.
+    pub const VERNEED: Self = Self(0x6fff_fffe);
+    /// Number of version dependencies.
+    pub const VERNEEDNUM: Self = Self(0x6fff_ffff);
 
     /// Returns the raw tag value.
     #[must_use]
