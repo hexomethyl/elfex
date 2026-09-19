@@ -616,6 +616,7 @@ fn relocation_kinds_classify_across_both_x86_abis() {
         ("libfeature.so", 17, RelocKind::Tls, Some(8)),
         ("libtls_ie.so", 18, RelocKind::Tls, Some(8)),
         ("cpp_comdat.o", 2, RelocKind::Other, Some(4)),
+        ("static_pie", 37, RelocKind::IndirectFunction, Some(8)),
     ] {
         assert_eq!(
             relocation_kind(x86_64, r_type),
@@ -650,6 +651,10 @@ fn relocation_kinds_classify_across_both_x86_abis() {
     // i386 copy relocations classify even though no fixture links one.
     assert_eq!(relocation_kind(i386, 5), RelocKind::Copy);
     assert_eq!(relocation_width(i386, 5), Some(4));
+    // i386 indirect-function relocations classify even though no fixture
+    // links one; type 42 there is the counterpart of x86-64's type 37.
+    assert_eq!(relocation_kind(i386, 42), RelocKind::IndirectFunction);
+    assert_eq!(relocation_width(i386, 42), Some(4));
     // An unknown machine falls back rather than guessing a width.
     assert_eq!(relocation_kind(Machine(0), 8), RelocKind::Other);
     assert_eq!(relocation_width(Machine(0), 8), None);
@@ -719,6 +724,16 @@ fn indirect_functions_decode_as_gnu_ifunc() {
     assert!(
         fixture("ifunc_dyn").rel_type_count(37) > 0,
         "an ifunc binary carries IRELATIVE relocations"
+    );
+    assert_eq!(
+        relocation_kind(Machine(EM_X86_64), 37),
+        RelocKind::IndirectFunction,
+        "IRELATIVE carries its own kind so consumers see it is resolver-computed"
+    );
+    assert_eq!(
+        relocation_width(Machine(EM_X86_64), 37),
+        Some(8),
+        "the slot is one 64-bit pointer even though the loader computes its value"
     );
     assert_ne!(
         relocation_kind(Machine(EM_X86_64), 37),

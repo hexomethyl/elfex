@@ -133,6 +133,7 @@ const fn split_type(class: ElfClass, info: u64) -> u32 {
 
 /// The common purpose of one relocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum RelocKind {
     /// Adds the load-bias change to a stored pointer.
     Relative,
@@ -146,6 +147,14 @@ pub enum RelocKind {
     Copy,
     /// Accesses thread-local storage.
     Tls,
+    /// Stores the address a resolver function returns.
+    ///
+    /// The loader calls the resolver the entry's addend names and stores the
+    /// returned address. That address is not known statically, so this kind
+    /// is deliberately distinct from [`RelocKind::Relative`]: rebasing an
+    /// image must not adjust the slot as though it held a stored pointer.
+    /// The slot itself is one pointer wide.
+    IndirectFunction,
     /// Has no common interpretation.
     Other,
 }
@@ -164,6 +173,7 @@ pub const fn relocation_kind(machine: Machine, r_type: u32) -> RelocKind {
             1 => RelocKind::Absolute,
             5 => RelocKind::Copy,
             16..=18 => RelocKind::Tls,
+            37 => RelocKind::IndirectFunction,
             _ => RelocKind::Other,
         },
         3 => match r_type {
@@ -173,6 +183,7 @@ pub const fn relocation_kind(machine: Machine, r_type: u32) -> RelocKind {
             1 => RelocKind::Absolute,
             5 => RelocKind::Copy,
             14 | 15 | 35 | 36 | 37 => RelocKind::Tls,
+            42 => RelocKind::IndirectFunction,
             _ => RelocKind::Other,
         },
         _ => RelocKind::Other,
@@ -186,12 +197,12 @@ pub const fn relocation_kind(machine: Machine, r_type: u32) -> RelocKind {
 pub const fn relocation_width(machine: Machine, r_type: u32) -> Option<u8> {
     match machine.value() {
         62 => match r_type {
-            8 | 6 | 7 | 1 | 5 | 16 | 17 | 18 => Some(8),
+            8 | 6 | 7 | 1 | 5 | 16 | 17 | 18 | 37 => Some(8),
             2 | 10 | 11 => Some(4),
             _ => None,
         },
         3 => match r_type {
-            8 | 6 | 7 | 1 | 5 => Some(4),
+            8 | 6 | 7 | 1 | 5 | 42 => Some(4),
             _ => None,
         },
         _ => None,
@@ -210,7 +221,8 @@ mod tests {
     const I386: Machine = Machine(3);
 
     /// Every x86-64 dynamic relocation type the corpus can produce, plus the
-    /// four-byte forms and the deliberately unclassified ones.
+    /// four-byte forms and the deliberately unclassified ones. Type 42 is
+    /// `R_X86_64_REX_GOTPCRELX` here, not the i386 indirect-function type.
     #[test]
     fn x86_64_relocations_classify_and_size() {
         for (r_type, kind, width) in [
@@ -226,7 +238,8 @@ mod tests {
             (17, RelocKind::Tls, Some(8)),
             (18, RelocKind::Tls, Some(8)),
             (4, RelocKind::Other, None),
-            (37, RelocKind::Other, None),
+            (37, RelocKind::IndirectFunction, Some(8)),
+            (42, RelocKind::Other, None),
         ] {
             assert_eq!(
                 relocation_kind(X86_64, r_type),
@@ -243,6 +256,8 @@ mod tests {
 
     /// The i386 table classifies the same purposes at half the width, and
     /// leaves the TLS forms unsized because their storage is model-specific.
+    /// Type 37 is `R_386_TLS_TPOFF32` here while x86-64 reads it as the
+    /// indirect-function type, so the tables must not share arms.
     #[test]
     fn i386_relocations_classify_and_size() {
         for (r_type, kind, width) in [
@@ -256,6 +271,7 @@ mod tests {
             (35, RelocKind::Tls, None),
             (36, RelocKind::Tls, None),
             (37, RelocKind::Tls, None),
+            (42, RelocKind::IndirectFunction, Some(4)),
             (2, RelocKind::Other, None),
         ] {
             assert_eq!(relocation_kind(I386, r_type), kind, "i386 type {r_type} kind");
