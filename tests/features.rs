@@ -127,8 +127,7 @@ fn program_header_tables_match_the_oracle() {
             entry.segments.len(),
             "{name}: segment count"
         );
-        for (index, (segment, expected)) in
-            image.segments().iter().zip(&entry.segments).enumerate()
+        for (index, (segment, expected)) in image.segments().iter().zip(&entry.segments).enumerate()
         {
             let header = &segment.header;
             assert_eq!(header.r#type.0, expected.kind, "{name}: seg {index} type");
@@ -155,8 +154,7 @@ fn section_header_tables_match_the_oracle() {
             entry.sections.len(),
             "{name}: section count"
         );
-        for (index, (section, expected)) in
-            image.sections().iter().zip(&entry.sections).enumerate()
+        for (index, (section, expected)) in image.sections().iter().zip(&entry.sections).enumerate()
         {
             let header = &section.header;
             assert_eq!(section.name, expected.name, "{name}: sec {index} name");
@@ -211,7 +209,10 @@ fn needed_soname_and_search_paths_match_the_oracle() {
             .dynamic()
             .unwrap_or_else(|error| panic!("{name}: dynamic: {error:?}"))
         else {
-            assert!(entry.soname.is_none(), "{name}: soname without a dynamic table");
+            assert!(
+                entry.soname.is_none(),
+                "{name}: soname without a dynamic table"
+            );
             continue;
         };
         let dynstr = image
@@ -365,7 +366,10 @@ fn symbol_tables_match_the_oracle() {
                     .iter()
                     .find(|symbol| symbol.name == expected.name)
                     .unwrap_or_else(|| {
-                        panic!("{name}: {label} is missing pinned symbol {:?}", expected.name)
+                        panic!(
+                            "{name}: {label} is missing pinned symbol {:?}",
+                            expected.name
+                        )
                     });
                 let label = format!("{name}: {label} symbol {:?}", expected.name);
                 assert_eq!(found.value, expected.value, "{label}: value");
@@ -447,9 +451,14 @@ fn tls_headers_match_the_oracle() {
     for entry in corpus() {
         let image = image_of(&entry);
         let name = &entry.file;
-        let actual = image
-            .tls()
-            .map(|tls| (tls.template_vaddr(), tls.file_size(), tls.mem_size(), tls.align()));
+        let actual = image.tls().map(|tls| {
+            (
+                tls.template_vaddr(),
+                tls.file_size(),
+                tls.mem_size(),
+                tls.align(),
+            )
+        });
         assert_eq!(actual, entry.tls, "{name}: PT_TLS header");
         if let Some(tls) = image.tls() {
             assert_eq!(
@@ -471,8 +480,7 @@ fn structural_validation_accepts_linked_output_and_flags_unlinked_objects() {
         let result = image.validate();
 
         if entry.etype == ET_REL {
-            let codes: Vec<ValidationCode> =
-                result.issues.iter().map(|issue| issue.code).collect();
+            let codes: Vec<ValidationCode> = result.issues.iter().map(|issue| issue.code).collect();
             assert!(
                 codes.contains(&ValidationCode::NoLoadSegments),
                 "{name}: an unlinked object should report NoLoadSegments; got {codes:?}"
@@ -569,7 +577,9 @@ fn rel_and_rela_forms_decode_their_distinct_layouts() {
         "every RELA entry carries an explicit addend"
     );
     assert!(
-        text.entries().iter().any(|record| record.addend == Some(-4)),
+        text.entries()
+            .iter()
+            .any(|record| record.addend == Some(-4)),
         "a PC-relative call site has a negative addend"
     );
     assert!(
@@ -586,11 +596,17 @@ fn rel_and_rela_forms_decode_their_distinct_layouts() {
         .expect("an object has at least one relocation table");
     assert!(!rel_text.is_rela(), "an i386 object uses the REL form");
     assert!(
-        rel_text.entries().iter().all(|record| record.addend.is_none()),
+        rel_text
+            .entries()
+            .iter()
+            .all(|record| record.addend.is_none()),
         "no REL entry carries an explicit addend"
     );
     assert!(
-        rel_text.entries().iter().all(|record| record.r_type <= 0xff),
+        rel_text
+            .entries()
+            .iter()
+            .all(|record| record.r_type <= 0xff),
         "an i386 type field is eight bits wide"
     );
     assert!(
@@ -629,7 +645,10 @@ fn relocation_kinds_classify_across_both_x86_abis() {
             "x86-64 type {r_type} (from {name}) width"
         );
         let present = fixture(name).rel_type_count(r_type);
-        assert!(present > 0, "{name} should contain a type {r_type} relocation");
+        assert!(
+            present > 0,
+            "{name} should contain a type {r_type} relocation"
+        );
     }
 
     for (name, r_type, kind) in [
@@ -645,7 +664,10 @@ fn relocation_kinds_classify_across_both_x86_abis() {
             "i386 type {r_type} (from {name}) classification"
         );
         let present = fixture(name).rel_type_count(r_type);
-        assert!(present > 0, "{name} should contain a type {r_type} relocation");
+        assert!(
+            present > 0,
+            "{name} should contain a type {r_type} relocation"
+        );
     }
 
     // i386 copy relocations classify even though no fixture links one.
@@ -664,11 +686,16 @@ fn relocation_kinds_classify_across_both_x86_abis() {
 fn thread_local_storage_is_exposed_for_every_model() {
     let exe = image_named("tls_exe");
     let tls = exe.tls().expect("tls_exe declares PT_TLS");
-    assert!(tls.mem_size() > tls.file_size(), ".tbss adds zero-fill bytes");
+    assert!(
+        tls.mem_size() > tls.file_size(),
+        ".tbss adds zero-fill bytes"
+    );
     assert!(tls.file_size() > 0, ".tdata contributes initialized bytes");
     assert!(tls.align() >= 8, "a double array raises the TLS alignment");
     assert!(
-        exe.sections().iter().any(|section| section.name == ".tdata"),
+        exe.sections()
+            .iter()
+            .any(|section| section.name == ".tdata"),
         "tls_exe has a .tdata section"
     );
     assert!(
@@ -758,7 +785,10 @@ fn symbol_visibility_and_binding_decode_from_real_output() {
             .unwrap_or_else(|| panic!("dyn_pie should define {name}"))
     };
 
-    assert_eq!(find("visible_default").visibility, SymbolVisibility::Default);
+    assert_eq!(
+        find("visible_default").visibility,
+        SymbolVisibility::Default
+    );
     assert_eq!(find("visible_hidden").visibility, SymbolVisibility::Hidden);
     assert_eq!(
         find("visible_protected").visibility,
@@ -772,9 +802,7 @@ fn symbol_visibility_and_binding_decode_from_real_output() {
     assert_eq!(find("visible_default").bind, SymbolBind::Global);
 
     // Hidden symbols are localized out of the dynamic table.
-    let dynamic_table = image
-        .dynamic_symbols()
-        .expect("dynamic symbols decode");
+    let dynamic_table = image.dynamic_symbols().expect("dynamic symbols decode");
     let dynamic_names: Vec<&str> = dynamic_table
         .symbols()
         .iter()
@@ -802,21 +830,19 @@ fn versioned_shared_object_exposes_its_soname_and_version_sections() {
     let strtab = StringTable::new(dynstr);
 
     assert_eq!(table.soname(strtab).as_deref(), Some("libfeature.so.1"));
-    assert!(
-        table.find(DynTag::VERDEF).is_some(),
-        "DT_VERDEF is present"
-    );
+    assert!(table.find(DynTag::VERDEF).is_some(), "DT_VERDEF is present");
     for wanted in [".gnu.version", ".gnu.version_d", ".gnu.version_r"] {
         assert!(
-            image.sections().iter().any(|section| section.name == wanted),
+            image
+                .sections()
+                .iter()
+                .any(|section| section.name == wanted),
             "libfeature.so should carry {wanted}"
         );
     }
 
     // The version script localizes everything it does not export.
-    let exported_table = image
-        .dynamic_symbols()
-        .expect("dynamic symbols decode");
+    let exported_table = image.dynamic_symbols().expect("dynamic symbols decode");
     let exported: Vec<&str> = exported_table
         .symbols()
         .iter()
@@ -890,24 +916,33 @@ fn static_and_stripped_fixtures_report_empty_tables() {
         "a static binary has no dynamic symbol table"
     );
     assert!(
-        !statically_linked.symbols().expect("symbols decode").symbols().is_empty(),
+        !statically_linked
+            .symbols()
+            .expect("symbols decode")
+            .symbols()
+            .is_empty(),
         "a static binary still has a static symbol table"
     );
 
     let stripped = image_named("dyn_stripped");
     assert!(
-        stripped.symbols().expect("symbols decode").symbols().is_empty(),
+        stripped
+            .symbols()
+            .expect("symbols decode")
+            .symbols()
+            .is_empty(),
         "a stripped binary has no .symtab"
     );
     assert!(
-        !stripped.dynamic_symbols().expect("decodes").symbols().is_empty(),
+        !stripped
+            .dynamic_symbols()
+            .expect("decodes")
+            .symbols()
+            .is_empty(),
         "stripping keeps the dynamic symbol table"
     );
     assert!(
-        stripped
-            .build_id()
-            .expect("build id decodes")
-            .is_some(),
+        stripped.build_id().expect("build id decodes").is_some(),
         "stripping keeps the build id note"
     );
 }
@@ -1138,26 +1173,89 @@ fn rebasing_leaves_indirect_function_slots_untouched() {
             checked += 1;
         }
     }
-    assert!(checked >= 20, "static_pie should resolve many ifuncs; saw {checked}");
+    assert!(
+        checked >= 20,
+        "static_pie should resolve many ifuncs; saw {checked}"
+    );
 }
 
 /// A minimal SHA-256 so the corpus digests can be checked without adding a
 /// dependency to a `no_std`, dependency-free crate.
 fn sha256_hex(data: &[u8]) -> String {
     const K: [u32; 64] = [
-        0x428a_2f98, 0x7137_4491, 0xb5c0_fbcf, 0xe9b5_dba5, 0x3956_c25b, 0x59f1_11f1, 0x923f_82a4,
-        0xab1c_5ed5, 0xd807_aa98, 0x1283_5b01, 0x2431_85be, 0x550c_7dc3, 0x72be_5d74, 0x80de_b1fe,
-        0x9bdc_06a7, 0xc19b_f174, 0xe49b_69c1, 0xefbe_4786, 0x0fc1_9dc6, 0x240c_a1cc, 0x2de9_2c6f,
-        0x4a74_84aa, 0x5cb0_a9dc, 0x76f9_88da, 0x983e_5152, 0xa831_c66d, 0xb003_27c8, 0xbf59_7fc7,
-        0xc6e0_0bf3, 0xd5a7_9147, 0x06ca_6351, 0x1429_2967, 0x27b7_0a85, 0x2e1b_2138, 0x4d2c_6dfc,
-        0x5338_0d13, 0x650a_7354, 0x766a_0abb, 0x81c2_c92e, 0x9272_2c85, 0xa2bf_e8a1, 0xa81a_664b,
-        0xc24b_8b70, 0xc76c_51a3, 0xd192_e819, 0xd699_0624, 0xf40e_3585, 0x106a_a070, 0x19a4_c116,
-        0x1e37_6c08, 0x2748_774c, 0x34b0_bcb5, 0x391c_0cb3, 0x4ed8_aa4a, 0x5b9c_ca4f, 0x682e_6ff3,
-        0x748f_82ee, 0x78a5_636f, 0x84c8_7814, 0x8cc7_0208, 0x90be_fffa, 0xa450_6ceb, 0xbef9_a3f7,
+        0x428a_2f98,
+        0x7137_4491,
+        0xb5c0_fbcf,
+        0xe9b5_dba5,
+        0x3956_c25b,
+        0x59f1_11f1,
+        0x923f_82a4,
+        0xab1c_5ed5,
+        0xd807_aa98,
+        0x1283_5b01,
+        0x2431_85be,
+        0x550c_7dc3,
+        0x72be_5d74,
+        0x80de_b1fe,
+        0x9bdc_06a7,
+        0xc19b_f174,
+        0xe49b_69c1,
+        0xefbe_4786,
+        0x0fc1_9dc6,
+        0x240c_a1cc,
+        0x2de9_2c6f,
+        0x4a74_84aa,
+        0x5cb0_a9dc,
+        0x76f9_88da,
+        0x983e_5152,
+        0xa831_c66d,
+        0xb003_27c8,
+        0xbf59_7fc7,
+        0xc6e0_0bf3,
+        0xd5a7_9147,
+        0x06ca_6351,
+        0x1429_2967,
+        0x27b7_0a85,
+        0x2e1b_2138,
+        0x4d2c_6dfc,
+        0x5338_0d13,
+        0x650a_7354,
+        0x766a_0abb,
+        0x81c2_c92e,
+        0x9272_2c85,
+        0xa2bf_e8a1,
+        0xa81a_664b,
+        0xc24b_8b70,
+        0xc76c_51a3,
+        0xd192_e819,
+        0xd699_0624,
+        0xf40e_3585,
+        0x106a_a070,
+        0x19a4_c116,
+        0x1e37_6c08,
+        0x2748_774c,
+        0x34b0_bcb5,
+        0x391c_0cb3,
+        0x4ed8_aa4a,
+        0x5b9c_ca4f,
+        0x682e_6ff3,
+        0x748f_82ee,
+        0x78a5_636f,
+        0x84c8_7814,
+        0x8cc7_0208,
+        0x90be_fffa,
+        0xa450_6ceb,
+        0xbef9_a3f7,
         0xc671_78f2,
     ];
     let mut state: [u32; 8] = [
-        0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab,
+        0x6a09_e667,
+        0xbb67_ae85,
+        0x3c6e_f372,
+        0xa54f_f53a,
+        0x510e_527f,
+        0x9b05_688c,
+        0x1f83_d9ab,
         0x5be0_cd19,
     ];
 
@@ -1175,8 +1273,7 @@ fn sha256_hex(data: &[u8]) -> String {
         let mut w = [0u32; 64];
         for (index, slot) in w.iter_mut().take(16).enumerate() {
             let at = index * 4;
-            *slot =
-                u32::from_be_bytes([chunk[at], chunk[at + 1], chunk[at + 2], chunk[at + 3]]);
+            *slot = u32::from_be_bytes([chunk[at], chunk[at + 1], chunk[at + 2], chunk[at + 3]]);
         }
         for index in 16..64 {
             let s0 = w[index - 15].rotate_right(7)

@@ -274,7 +274,11 @@ mod tests {
             (42, RelocKind::IndirectFunction, Some(4)),
             (2, RelocKind::Other, None),
         ] {
-            assert_eq!(relocation_kind(I386, r_type), kind, "i386 type {r_type} kind");
+            assert_eq!(
+                relocation_kind(I386, r_type),
+                kind,
+                "i386 type {r_type} kind"
+            );
             assert_eq!(
                 relocation_width(I386, r_type),
                 width,

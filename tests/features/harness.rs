@@ -143,14 +143,19 @@ impl Entry {
 }
 
 fn dec(text: &str) -> u64 {
-    text.parse().unwrap_or_else(|_| panic!("not a number: {text:?}"))
+    text.parse()
+        .unwrap_or_else(|_| panic!("not a number: {text:?}"))
 }
 
 /// Splits a record into the tokens before a quoted field, the field, and the
 /// tokens after it.
 fn split_quoted(line: &str) -> (Vec<&str>, String, Vec<&str>) {
-    let first = line.find('"').unwrap_or_else(|| panic!("no quote: {line:?}"));
-    let last = line.rfind('"').unwrap_or_else(|| panic!("no quote: {line:?}"));
+    let first = line
+        .find('"')
+        .unwrap_or_else(|| panic!("no quote: {line:?}"));
+    let last = line
+        .rfind('"')
+        .unwrap_or_else(|| panic!("no quote: {line:?}"));
     (
         line[..first].split_whitespace().collect(),
         line[first + 1..last].to_string(),
@@ -259,9 +264,10 @@ pub fn corpus() -> Vec<Entry> {
             }
             "reltype" => {
                 let fields: Vec<u64> = parts.map(dec).collect();
-                current
-                    .rel_types
-                    .push((u32::try_from(fields[0]).unwrap(), usize::try_from(fields[1]).unwrap()));
+                current.rel_types.push((
+                    u32::try_from(fields[0]).unwrap(),
+                    usize::try_from(fields[1]).unwrap(),
+                ));
             }
             "tls" => {
                 let fields: Vec<u64> = parts.map(dec).collect();
