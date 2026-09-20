@@ -3,7 +3,7 @@
 
 [package]
 name = "elfex"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A no_std-friendly parser, editor, and builder for raw and mapped ELF executable images"
@@ -13,7 +13,7 @@ readme = "README.md"
 keywords = ["elf", "executable", "linux", "binary", "parser"]
 categories = ["parsing", "development-tools"]
 documentation = "https://docs.rs/elfex"
-exclude = ["/tests/corpus/", "/tests/features/", "/fuzz/", "/.github/"]
+exclude = ["/tests/", "/fuzz/", "/.github/"]
 
 [features]
 default = ["std"]
